@@ -89,6 +89,15 @@ Claude Code picks it up automatically. Ask something like "translate this
 SRT to English and upload it to this YouTube video" and it loads the
 workflow in `SKILL.md`.
 
+## Using it with other agents (Codex, etc.)
+
+`SKILL.md`'s auto-loading is a Claude Code convention — other agents don't
+pick it up on their own. [AGENTS.md](AGENTS.md) is a small bridge file
+that points a non-Claude-Code agent (Codex CLI, etc.) at `SKILL.md` and
+tells it to follow that workflow. The underlying scripts are plain
+stdlib Python either way, so they work standalone regardless of which
+agent (or no agent) is driving them.
+
 ## Using the scripts standalone
 
 Each script under `scripts/` is a self-contained CLI and works outside
