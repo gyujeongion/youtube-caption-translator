@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+*.srt
+!example*.srt
+/tmp/
+*_token.json
+client_secret*.json
+credentials/
+.omc/
