@@ -245,7 +245,9 @@ class PathTests(unittest.TestCase):
 
     def test_expand_path_is_inert_on_posix(self):
         with mock.patch.object(C, "is_windows", return_value=False), mock.patch.dict(os.environ, {"X": "y"}):
-            self.assertEqual(str(C.expand_path("$X/a.srt")), "$X/a.srt")            # '$' is legal in POSIX names
+            # '$' is legal in POSIX names and must not be expanded (compare as Path: a real
+            # WindowsPath prints backslashes, so a plain string compare fails on Windows runners)
+            self.assertEqual(C.expand_path("$X/a.srt"), pathlib.Path("$X/a.srt"))
             self.assertEqual(C.expand_path("~/a.srt"), pathlib.Path.home() / "a.srt")
 
     def test_config_dir_default_and_override_with_quotes_and_vars(self):
