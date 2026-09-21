@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
-"""편집기 SRT의 미완결 발화 블록을 찾아낸다.
+"""Find unfinished-utterance blocks in an editor SRT (Korean sources only).
 
-캡컷·프리미어 자동자막은 말을 조각내면서 문장 끝을 흘린다. 남은 조각만
-읽으면 완결된 문장처럼 보여서, 번역할 때 없는 뜻을 지어내게 된다.
+Auto-captions from CapCut/Premiere cut speech into pieces and drop sentence
+endings. Reading only the leftover fragment makes it look like a finished
+sentence, and the translation then invents meaning that was never said.
 
-  원본:  "형이 자주 플레이하는 거 중에" / "터진다 그냥"
-  실제:  "형이 자주 플레이하는 거 중에 진짜 터지는 거 없어?"
-  오역:  "It's one of the ones you play a lot — it just tears the place up."
+  source:      "형이 자주 플레이하는 거 중에" / "터진다 그냥"
+  actually:    "형이 자주 플레이하는 거 중에 진짜 터지는 거 없어?"
+  mistranslated: "It's one of the ones you play a lot -- it just tears the place up."
 
-한국어는 문장이 끝났는지가 어미에 드러난다. 연결어미·관형형으로 끝나면
-뒤에 말이 더 있었다는 뜻이다. 그런 블록을 뽑아 번역 전에 확인받는다.
+In Korean, whether a sentence has ended shows in its ending. A block that ends
+in a connective ending or an adnominal form means more words followed. This
+script lists those blocks so they can be checked before translating.
 
-사용:
-    python3 flag_incomplete.py <원본.srt> [--srt-merged <번역.srt>]
+LIMITATION: the heuristics understand KOREAN sources only (they match Korean
+verb endings). Run on an SRT with no Hangul, it prints
+"Korean-source heuristics only; skipping" and exits 0.
+
+Usage:
+    python3 flag_incomplete.py <source.srt> [--merged <translated.srt>] [--weak]
+
+    --merged   judge on the merged translation blocks (source fragments grouped by
+               the translated SRT's boundaries) instead of the raw source blocks
+    --weak     also print weak signals (default: strong signals only)
 """
 import argparse
 import re
@@ -20,29 +30,30 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import _common as C  # noqa: E402
 from verify_srt import parse  # noqa: E402
 
-# 이걸로 끝나면 뒤에 말이 더 있었다는 신호.
-# 강함 = 그 자체로 문장이 될 수 없는 어미.
+# Ending in one of these signals that more words followed.
+# Strong = an ending that cannot end a sentence by itself.
 DANGLING_STRONG = [
     "중에", "중에서", "가운데", "다가", "면서", "려고", "러", "느라",
     "지만", "는데도", "든지", "거나", "든가", "커녕", "밖에",
     "에서", "부터", "까지", "처럼", "보다", "말고", "대신",
     "의", "와", "과", "랑", "이랑", "하고",
 ]
-# 관형형(뒤에 명사가 와야 함)
+# Adnominal forms (a noun must follow)
 ADNOMINAL = re.compile(r"(하는|되는|있는|없는|같은|[가-힣]+[은는을]) *$")
-# 연결어미 — 문맥에 따라 종결도 되므로 약한 신호
+# Connective endings -- can also end a sentence depending on context, so a weak signal
 DANGLING_WEAK = ["고", "서", "니까", "는데", "인데", "라서", "며", "자"]
 
-# 종결로 확정되는 어미·부호
+# Endings and punctuation that confirm a finished sentence
 TERMINAL = re.compile(
     r"([.?!…]|다|요|까|죠|네|군|자|래|야|음|함|임|잖아|거든|는걸|더라|구나|세요|십시오)\s*$"
 )
 
 
 def classify(text: str):
-    """한 블록의 한국어 텍스트가 완결됐는지 판정."""
+    """Decide whether one block of Korean text is complete."""
     t = re.sub(r"\s+", " ", text.replace("\n", " ")).strip()
     if not t:
         return None
@@ -54,18 +65,18 @@ def classify(text: str):
 
     for suf in DANGLING_STRONG:
         if last.endswith(suf):
-            return ("강함", f"'{suf}'로 끝남 — 뒤에 말이 더 있었다")
+            return ("strong", f"ends in '{suf}' -- more words followed")
     if ADNOMINAL.search(t):
-        return ("강함", "관형형으로 끝남 — 뒤에 명사가 잘렸다")
+        return ("strong", "ends in an adnominal form -- the following noun was cut off")
     if TERMINAL.search(t):
         return None
     for suf in DANGLING_WEAK:
         if last.endswith(suf):
-            return ("약함", f"연결어미 '{suf}' — 종결일 수도, 잘렸을 수도")
-    return ("약함", "종결어미 없음")
+            return ("weak", f"connective ending '{suf}' -- may be a real ending or cut off")
+    return ("weak", "no sentence-final ending")
 
 
-# 뒤에 반드시 명사(구)가 와야 하는 조사·의존명사
+# Particles / dependent nouns that must be followed by a noun phrase
 NOUN_REQUIRED = [
     "중에", "중에서", "가운데", "처럼", "보다", "말고", "대신",
     "의", "와", "과", "랑", "이랑", "하고", "밖에",
@@ -73,11 +84,11 @@ NOUN_REQUIRED = [
 
 
 def check_seams(ko: str):
-    """병합 그룹 안 조각 경계에서 말이 잘렸는지 본다.
+    """Check the seams between fragments inside a merged group for cut-off speech.
 
     "형이 자주 플레이하는 거 중에" + "터진다 그냥"
-    → '중에' 뒤에는 명사가 와야 하는데 서술어가 왔다. 사이에 있던 말
-      ("진짜 터지는 거 없어?")이 편집에서 사라졌다는 뜻이다.
+    -> a noun must follow '중에' but a predicate came instead, meaning the words in
+       between ("진짜 터지는 거 없어?") were cut out during editing.
     """
     frags = [f.strip() for f in ko.split(" / ") if f.strip()]
     for a, b in zip(frags, frags[1:]):
@@ -86,23 +97,46 @@ def check_seams(ko: str):
             continue
         first = b.split()[0] if b.split() else ""
         if TERMINAL.search(first):
-            return (f"'{last}' 뒤에 명사가 와야 하는데 '{first}'가 왔다 "
-                    "— 사이에 있던 말이 잘렸다")
+            return (f"a noun must follow '{last}' but '{first}' came instead "
+                    "-- the words in between were cut off")
     return None
 
 
+def is_korean(text: str) -> bool:
+    """True if a meaningful share of the letters are Hangul syllables."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    hangul = sum(1 for c in letters if "\uac00" <= c <= "\ud7a3")
+    return hangul / len(letters) >= 0.2
+
+
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("source", help="편집기에서 뽑은 원본 SRT (한국어)")
-    ap.add_argument("--merged", help="병합 번역 SRT — 있으면 병합 후 기준으로 판정")
-    ap.add_argument("--weak", action="store_true", help="약한 신호도 전부 출력")
+    C.setup_utf8_io()
+    ap = argparse.ArgumentParser(
+        description="Flag unfinished-utterance blocks in a Korean editor SRT. "
+                    "Understands Korean sources only (Korean verb-ending heuristics).")
+    ap.add_argument("source", help="source SRT exported from the editor (Korean)")
+    ap.add_argument("--merged", help="merged translated SRT -- if given, judge on the merged blocks")
+    ap.add_argument("--weak", action="store_true", help="also print weak signals")
     args = ap.parse_args()
 
-    src = parse(Path(args.source))
+    try:
+        src = parse(C.expand_path(args.source))
+    except (OSError, ValueError) as e:  # missing file, or an SRT saved in a legacy encoding
+        C.eprint(f"error: {e}")
+        raise SystemExit(2) from None
+    if not is_korean(" ".join(s["text"] for s in src)):
+        print("Korean-source heuristics only; skipping")
+        return
 
     if args.merged:
-        # 번역 블록 경계로 원본을 묶어, 병합 후 텍스트로 판정한다.
-        tgt = parse(Path(args.merged))
+        # Group source fragments by the translated block boundaries and judge the merged text.
+        try:
+            tgt = parse(C.expand_path(args.merged))
+        except (OSError, ValueError) as e:
+            C.eprint(f"error: {e}")
+            raise SystemExit(2) from None
         groups = []
         for i, blk in enumerate(tgt, 1):
             inside = [s for s in src
@@ -115,20 +149,20 @@ def main():
     hits = []
     for idx, start, ko, en in groups:
         verdict = classify(ko)
-        if verdict and (args.weak or verdict[0] == "강함"):
+        if verdict and (args.weak or verdict[0] == "strong"):
             hits.append((idx, start, ko, en, verdict))
             continue
-        # 병합 그룹 안의 조각 경계도 본다. "…거 중에" 다음에 명사가 아니라
-        # 서술어가 바로 오면, 그 사이에 있던 말이 편집에서 잘려나간 것이다.
+        # Also check seams between fragments in a merged group: if a predicate follows
+        # "...거 중에" instead of a noun, the words in between were cut out of the edit.
         gap = check_seams(ko)
         if gap:
-            hits.append((idx, start, ko, en, ("강함", gap)))
+            hits.append((idx, start, ko, en, ("strong", gap)))
 
     if not hits:
-        print("✓ 미완결로 의심되는 블록 없음")
+        print("✓ No blocks look unfinished")
         return
 
-    print(f"⚠ 확인 필요 {len(hits)}개 — 번역 전에 실제 발화를 확인한다\n")
+    print(f"⚠ {len(hits)} block(s) need checking -- confirm the actual speech before translating\n")
     for idx, start, ko, en, (level, why) in hits:
         sec = start / 1000
         ts = f"{int(sec // 60):02d}:{sec % 60:06.3f}"

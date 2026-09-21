@@ -1,9 +1,10 @@
-"""검수용 대조표를 만든다 — 번역 블록마다 그 구간의 원본 한국어를 붙인다.
+"""Build a review table: attach the source text of each interval to every translated block.
 
-    python3 align_pairs.py <원본.srt> <번역.srt> [-o 대조표.md]
+    python3 align_pairs.py <source.srt> <translated.srt> [-o review_table.md]
 
-번역이 문장 단위로 병합돼 있으면 원본 조각 여러 개가 한 블록에 대응한다.
-그 대응을 눈으로 확인할 수 있게 표로 뽑아, 검수(뉘앙스·누락·왜곡)를 한다.
+When the translation was merged into sentences, several source fragments map to
+one translated block. This prints that mapping as a table so you can check it by
+eye (nuance, omissions, distortions) before uploading.
 """
 from __future__ import annotations
 
@@ -11,19 +12,20 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import _common as C  # noqa: E402
 from verify_srt import parse  # noqa: E402
 
 
 def build(src_path: str, dst_path: str) -> str:
-    src, dst = parse(pathlib.Path(src_path)), parse(pathlib.Path(dst_path))
+    src, dst = parse(C.expand_path(src_path)), parse(C.expand_path(dst_path))
     lines = [
-        f"# 번역 검수 대조표",
+        "# Translation review table",
         "",
-        f"- 원본: `{src_path}` ({len(src)} 엔트리)",
-        f"- 번역: `{dst_path}` ({len(dst)} 엔트리)",
+        f"- Source: `{src_path}` ({len(src)} entries)",
+        f"- Translation: `{dst_path}` ({len(dst)} entries)",
         "",
-        "각 블록마다 (1) 의미 왜곡·누락 (2) 구어 자연스러움 (3) 고유명사·전문용어",
-        "보존을 확인한다. 문제가 있으면 블록 번호로 지적한다.",
+        "For each block check (1) meaning distortion or omission (2) natural spoken style",
+        "(3) preservation of proper nouns and terms. Report problems by block number.",
         "",
     ]
     for y in dst:
@@ -31,30 +33,47 @@ def build(src_path: str, dst_path: str) -> str:
         if not covered:
             covered = [x for x in src
                        if x["start"] < y["end"] and x["end"] > y["start"]]
-        ko = " / ".join(x["text"].replace("\n", " ") for x in covered)
-        en = y["text"].replace("\n", " ")
+        source_text = " / ".join(x["text"].replace("\n", " ") for x in covered)
+        target_text = y["text"].replace("\n", " ")
         lines += [
-            f"## {y['index']}  {y['raw_start']} → {y['raw_end']}",
-            f"- KO: {ko}",
-            f"- EN: {en}",
+            f"## {y['index']}  {y['raw_start']} -> {y['raw_end']}",
+            f"- SRC: {source_text}",
+            f"- TGT: {target_text}",
             "",
         ]
     return "\n".join(lines)
 
 
-if __name__ == "__main__":
-    args = sys.argv[1:]
+def main(argv: list[str] | None = None) -> int:
+    C.setup_utf8_io()
+    args = list(sys.argv[1:] if argv is None else argv)
+    if any(a in ("-h", "--help") for a in args):
+        print(__doc__)
+        return 0
     out = None
     if "-o" in args:
         i = args.index("-o")
+        if i + 1 >= len(args):
+            print(__doc__)
+            return 2
         out = args[i + 1]
         args = args[:i] + args[i + 2:]
     if len(args) != 2:
         print(__doc__)
-        raise SystemExit(2)
-    text = build(args[0], args[1])
+        return 2
+    try:
+        text = build(args[0], args[1])
+    except (OSError, ValueError) as e:  # missing file, or an SRT saved in a legacy encoding
+        C.eprint(f"error: {e}")
+        return 2
     if out:
-        pathlib.Path(out).write_text(text, encoding="utf-8")
-        print(f"대조표 저장: {out}")
+        out_path = C.expand_path(out)
+        C.write_text_lf(out_path, text + "\n")  # UTF-8, LF on every OS (Path.write_text would write CRLF on Windows)
+        print(f"Review table saved: {out_path}")
     else:
         print(text)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

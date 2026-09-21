@@ -8,3 +8,7 @@ __pycache__/
 client_secret*.json
 credentials/
 .omc/
+
+ytcaption.env
+ytcaption_prefs.json
+*.env

@@ -1,0 +1,123 @@
+name: tests
+
+# Windows is the platform this tool cannot be tried on locally, so the matrix runs everything on real
+# Windows runners too. The Windows job also repeats the suite with a legacy console codepage
+# (PYTHONUTF8 off, PYTHONIOENCODING=cp1252) so encoding regressions show up here first.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.12", "3.x"]   # 3.x = latest stable 3 release; the code targets 3.10+
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+
+      # None of the GitHub-hosted runner images ships ffmpeg (checked against the runner-images
+      # readmes). The tests that need it are skipped when it is absent, so an install failure
+      # (mirror hiccup) must not fail the job: continue-on-error, and the next step reports what is there.
+      - name: Install ffmpeg (Ubuntu)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install ffmpeg
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: choco install ffmpeg -y --no-progress
+
+      - name: Environment report
+        shell: python
+        run: |
+          import locale, shutil, subprocess, sys
+          print("python", sys.version)
+          print("preferred encoding:", locale.getpreferredencoding(False), "| stdout:", sys.stdout.encoding,
+                "| utf8_mode:", sys.flags.utf8_mode)
+          for tool in ("ffmpeg", "ffprobe", "yt-dlp"):
+              print(tool, "->", shutil.which(tool))
+          exe = shutil.which("ffmpeg")
+          if exe:
+              print(subprocess.run([exe, "-version"], capture_output=True, text=True).stdout.splitlines()[0])
+          else:
+              print("ffmpeg is not installed: the tests that need it will be skipped")
+
+      - name: py_compile every script and test
+        shell: python
+        run: |
+          import glob, py_compile
+          files = sorted(glob.glob("scripts/*.py") + glob.glob("tests/*.py"))
+          for f in files:
+              py_compile.compile(f, doraise=True)
+          print("compiled", len(files), "files")
+
+      - name: Unit tests
+        run: python -m unittest discover tests -v
+
+      - name: --help of every script
+        run: python tests/smoke_help.py
+
+      # Real Windows only: the default console codepage is cp1252/cp949, not UTF-8. Force that
+      # explicitly (PYTHONUTF8=0 also keeps this meaningful once Python defaults to UTF-8 mode).
+      - name: Unit tests and --help with a legacy console codepage (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: cp1252
+          PYTHONUTF8: "0"
+        run: |
+          python tests/smoke_help.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -X utf8=0 -m unittest discover tests -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PYTHONIOENCODING = "cp949"
+          python -X utf8=0 -m unittest discover tests
+          exit $LASTEXITCODE
+
+      - name: First-run preflight prints cleanly (Windows, piped output)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: cp1252
+          PYTHONUTF8: "0"
+          YTCAPTION_HOME: ${{ runner.temp }}\ytcaption 한글 폴더
+        run: |
+          # exit code 1 is expected (no YouTube token in CI); anything else, or a traceback, is a failure
+          $out = python scripts/check_setup.py 2>&1 | Out-String
+          Write-Output $out
+          if ($out -match "Traceback") { throw "traceback in check_setup output" }
+          if ($out -notmatch "NEXT STEP:") { throw "check_setup did not reach its NEXT STEP line" }
+          python scripts/detect_hardware.py --json | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
