@@ -33,7 +33,22 @@ source.srt ──①   sentence-merged translation ──▶ <name>.<lang>.srt
           ④   upload_caption.py     create/update the YouTube caption track
           ⑤   set_localization.py   set a locale-specific title (e.g. "(ENG SUB)")
           ⑥   extract_thumbnails.py extract & gallery candidate thumbnail frames
+          ⑦   multi-language        download_caption → parallel translation → check_parallel → cross-review → upload
 ```
+
+**Two stages, always in this order:**
+
+1. **Finish one pivot language first** (usually English): ⓪–⑤, with the human
+   tuning the nuance — who is speaking to whom, subjects, names and stage
+   names, song titles, on-set jargon. This is the only stage where a person
+   reviews the translation line by line.
+2. **Only then expand to other languages** (⑦). Every other language is
+   translated from the reviewed pivot track, cross-reviewed by a second
+   agent and checked mechanically — no line-by-line human review.
+
+Do not start stage 2 while the pivot is still being corrected: every pivot
+mistake is copied into every language, and fixing it afterwards means
+re-editing and re-uploading N files (and N × 450-500 quota units).
 
 The circled markers (Ⓐ ⓪ ① ...) are only labels. If a console does not draw
 them, read them as A, 0, 1, 1.5, 2 ...
@@ -529,6 +544,97 @@ upload.
 Copy the chosen PNG from `<working folder>/thumb_candidates/picks/` to
 wherever you upload thumbnails from (any file manager, or `cp` on macOS/Linux
 / `Copy-Item` in PowerShell).
+
+### ⑦ Multi-language expansion — the reviewed pivot track is the skeleton
+
+Use this after the pivot language (step 1 of "Two stages") is published and
+confirmed. Captions in the viewer's own language matter most where the
+audience is large and English reading is weak; where English is widely read,
+YouTube's built-in auto-translate of your pivot track is often enough.
+**Choosing languages** — decide with the user, from their own data first:
+YouTube Analytics views by country, comments' languages, where they tour or
+sell, then market size. A handful of languages with a real audience beats a
+long list: each caption upload costs ~450 quota units (about 20 per day), and
+every future video repeats the cost. Store the choice in prefs
+`target_languages`.
+
+**Skeleton rule.** Reuse the pivot's merged blocks and timecodes 1:1. Do not
+re-design boundaries per language — the pivot review already resolved
+speakers, subjects and references, and every language inherits that.
+
+```bash
+# 1) pull the published tracks (no local editor SRT needed; ASR tracks skipped)
+python3 scripts/download_caption.py --video <videoId> --all --out-dir <work>
+
+# 2) translate: meaning from the pivot track, tone/register from the source language.
+#    One agent per language, in parallel. If the source track is auto-generated (ASR)
+#    and disagrees with the pivot, follow the pivot.
+
+# 3) mechanical check (same blocks/timecodes, leftovers, line limits)
+python3 scripts/check_parallel.py <work>/<videoId>.en.srt <work>/<videoId>.ja.srt --lang ja
+#    blocks that must stay as in the pivot (a pun, a brand phrase, an English word
+#    said on camera):  --keep-same 95,144
+
+# 4) cross-review by a DIFFERENT agent (fresh eyes) reading source / pivot / target
+#    side by side: meaning, register and forms of address, that language's
+#    subtitle conventions, then back to 3)
+
+# 5) upload each language, then all localized titles/descriptions in one call
+python3 scripts/upload_caption.py --video <videoId> --srt <work>/<videoId>.ja.srt --lang ja --name "日本語"
+python3 scripts/set_localization.py --video <videoId> --locs <work>/<videoId>.locs.json
+#    locs.json = {"ja": {"title": "...【日本語字幕】", "description": "..."}, "es": {...}}
+```
+
+**What to hand each translator agent** (write it once as a brief file): the
+video context (who is who, the relationships, forms of address), the rule
+"same block count and timecodes as the pivot, at most 2 lines", the line
+limits (ja/zh 18 characters, th 40, others 44), terms that stay in their
+original form (artist names, song titles, gear, genre words the local scene
+actually uses), lyrics handling (♪-marked blocks), and "if a block is truly
+ambiguous, translate conservatively and list it — do not guess". Per-language
+notes that paid off: Spanish — neutral Latin American (tú, no vosotros);
+Portuguese — Brazilian (você, celular); Traditional Chinese — Taiwan vocabulary,
+no simplified characters (run a converter check), spaces instead of commas;
+Vietnamese — every tone mark, consistent anh/em; Thai — no spaces between
+words, consistent pronouns and particles; German/French — du/tu vs Sie/vous
+per relationship; Japanese — casual vs polite register per speaker.
+
+**Title suffixes in each language's own convention.** Each locale only sees
+its own title, so use the marker that audience actually searches for rather
+than one universal tag:
+
+| Locale | Marker |
+|---|---|
+| en | `(ENG SUB)` |
+| ja | `【日本語字幕】` |
+| id | `(Sub Indo)` |
+| es | `(Sub Español)` |
+| zh-TW / zh-HK | `【中字】` |
+| th | `(ซับไทย)` |
+| de | `(Deutsche Untertitel)` |
+| vi | `(Vietsub)` |
+| fr | `(VOSTFR)` |
+| pt | `(Legendado)` |
+
+Rebuild the title body in each language (don't translate word by word); keep
+names in their official form (a stage name in capitals stays in capitals).
+
+**Lessons from a real 9-language run (4 videos, 36 files):**
+
+- An "untranslated" check that cannot be told about intentional exceptions
+  makes translators bend the text to pass it: song titles got translated, an
+  English pun got translated, an English word spoken on camera ("Nasty!" as a
+  vocal direction) became "dirty" in five languages, and a pitch-direction
+  arrow (↗) was stripped. Hence `--keep-same`, and brief the reviewers
+  explicitly about each such block.
+- The cross-review is worth it: it fixed 22–116 blocks per language (reversed
+  forms of address, dropped clauses, mistranslations such as "streaming"
+  becoming "live broadcast" in Taiwanese Mandarin).
+- Late pivot fixes (two names, one typo, one wording) forced edits to all 36
+  files — the reason for the two-stage order above.
+- Quota ran out after 4 title updates + 3 pivot updates + 18 new tracks in
+  one day (downloads and list calls count too). Split big batches across days;
+  the scripts stop with a one-line "daily API quota exhausted" message.
 
 ## Platform-native A/B testing is not exposed via API
 

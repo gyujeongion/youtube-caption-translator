@@ -208,12 +208,28 @@ python3 scripts/upload_caption.py --video VIDEO_ID --srt translation.en.srt --la
 # 언어별 제목 설정 (--title 반복 가능, --en-title X는 --title "en=X"와 같음)
 python3 scripts/set_localization.py --video VIDEO_ID --title "en=Your English Title" --title "ja=あなたの日本語タイトル"
 
+# 여러 언어 제목·설명을 JSON 파일 하나로 한 번에
+python3 scripts/set_localization.py --video VIDEO_ID --locs "<작업 폴더>/locs.json"
+
+# 다국어 확장: 검수 끝난 기준 언어 트랙을 받고, 각 번역본을 그것과 대조 검증
+python3 scripts/download_caption.py --video VIDEO_ID --all --out-dir "<작업 폴더>"
+python3 scripts/check_parallel.py "<작업 폴더>/VIDEO_ID.en.srt" "<작업 폴더>/VIDEO_ID.ja.srt" --lang ja
+
 # 썸네일 후보 뽑기
 python3 scripts/extract_thumbnails.py grab --source VIDEO.mp4 --timestamps "0:06,2:38,3:03" --out "<작업 폴더>/thumbs"
 python3 scripts/extract_thumbnails.py gallery --picks-dir "<작업 폴더>/thumbs/picks" --out "<작업 폴더>/thumbs/gallery.html"
 ```
 
 토큰 파일을 파일명만 적으면 설정 폴더 기준으로 찾고, 절대 경로를 줘도 됩니다.
+
+## 여러 언어로 늘리기
+
+두 단계로 합니다. 먼저 **기준 언어 하나**(보통 영어)를 사람이 뉘앙스까지 확인해 완벽하게 맞춥니다.
+그다음에만 에이전트가 다른 언어로 확장합니다. 각 언어는 검수된 기준 트랙을 같은 블록·타임코드 그대로
+번역하고, 다른 에이전트가 교차검수하고, `check_parallel.py`로 기계검증합니다. 줄 단위 사람 검수는
+없습니다. 언어는 긴 목록보다 내 시청자 데이터(유튜브 애널리틱스 국가별 조회)로 고르세요. 자막 하나
+올릴 때마다 하루 약 10,000 쿼터 중 450 정도를 씁니다. 제목에는 언어별 관용 자막 표기를 붙입니다
+(`【日本語字幕】`, `(Sub Indo)`, `(Vietsub)`, `(VOSTFR)` 등). 자세한 내용은 SKILL.md ⑦.
 
 ## 왜 합친 다음에 번역하나
 
@@ -234,7 +250,7 @@ python3 scripts/extract_thumbnails.py gallery --picks-dir "<작업 폴더>/thumb
 
 | 경로 | 내용 |
 |---|---|
-| [SKILL.md](SKILL.md) | 에이전트가 따르는 작업 절차: Phase 0 설정, Ⓐ 단계(자막 원본 얻기), ⓪~⑥ 단계 |
+| [SKILL.md](SKILL.md) | 에이전트가 따르는 작업 절차: Phase 0 설정, Ⓐ 단계(자막 원본 얻기), ⓪~⑦ 단계 |
 | [AGENTS.md](AGENTS.md) | 스킬 자동 로딩이 없는 에이전트용 연결 파일 |
 | [references/setup-wizard.md](references/setup-wizard.md) | 첫 실행 질문 스크립트 |
 | [references/google-cloud-setup.md](references/google-cloud-setup.md) | 구글 클라우드 안내, 할당량, 문제 해결 |
@@ -251,7 +267,9 @@ python3 scripts/extract_thumbnails.py gallery --picks-dir "<작업 폴더>/thumb
 | `scripts/align_pairs.py` | 원본/번역 검수 표 |
 | `scripts/reauth_channel.py` | 채널 인증과 토큰 저장 |
 | `scripts/upload_caption.py` | 자막 트랙 생성 또는 갱신 |
-| `scripts/set_localization.py` | 언어별 영상 제목 |
+| `scripts/set_localization.py` | 언어별 영상 제목·설명 (`--locs`로 여러 언어 한 번에) |
+| `scripts/download_caption.py` | 영상에 이미 있는 자막 트랙을 SRT로 받기 |
+| `scripts/check_parallel.py` | 번역본을 기준 트랙과 대조 검증(같은 블록·타임코드·줄 길이) |
 | `scripts/extract_thumbnails.py` | 썸네일 후보 프레임과 갤러리 |
 
 ## 라이선스

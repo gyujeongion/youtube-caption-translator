@@ -53,6 +53,16 @@ def _body_text(e: urllib.error.HTTPError, limit: int | None = None) -> str:
     return text if limit is None else text[:limit]
 
 
+def raise_for_http(e: urllib.error.HTTPError, what: str, limit: int = 800) -> None:
+    """Turn an HTTPError into a one-line SystemExit. quotaExceeded gets a plain-language message
+    (a batch that runs out of quota should stop cleanly, not print a traceback)."""
+    body = _body_text(e)
+    if "quotaExceeded" in body:
+        raise SystemExit(f"{what} failed: daily API quota exhausted (quotaExceeded). "
+                         "It resets at midnight Pacific Time; resume the remaining uploads then.")
+    raise SystemExit(f"{what} failed {e.code}: {body[:limit]}")
+
+
 def token_path(name: str) -> pathlib.Path:
     return C.resolve_in_config(name)
 
@@ -91,7 +101,11 @@ def access_token(name: str) -> str:
 
 def api_get(url: str, at: str) -> dict:
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {at}"})
-    return json.load(urllib.request.urlopen(req, timeout=HTTP_TIMEOUT))
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=HTTP_TIMEOUT))
+    except urllib.error.HTTPError as e:
+        raise_for_http(e, "API request", 300)
+        raise  # unreachable
 
 
 def list_tracks(video: str, at: str) -> list[dict]:
@@ -126,7 +140,8 @@ def send(url: str, method: str, meta: dict, srt: pathlib.Path, at: str) -> dict:
     try:
         return json.load(urllib.request.urlopen(req, timeout=UPLOAD_TIMEOUT))
     except urllib.error.HTTPError as e:
-        raise SystemExit(f"Upload failed {e.code}: {_body_text(e, 800)}")
+        raise_for_http(e, "Upload")
+        raise  # unreachable
 
 
 def main(argv: list[str] | None = None) -> int:

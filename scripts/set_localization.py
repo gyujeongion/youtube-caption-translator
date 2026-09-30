@@ -6,6 +6,9 @@ localized titles so only viewers of that locale see a different title.
         --title ja="ソウルの屋上でDJセットを撮影 (日本語字幕)" \
         [--token my_channel_token.json]
 
+    python3 set_localization.py --video <videoId> --locs locs.json   # many languages at once
+        # locs.json = {"ja": {"title": "...", "description": "..."}, "es": {"title": "..."}}
+
     python3 set_localization.py --video <videoId> --en-title "..."   # alias for --title en="..."
     python3 set_localization.py --video <videoId> --show             # inspect current state only
 
@@ -23,8 +26,9 @@ Default behavior:
 - Does NOT auto-append any suffix (like "(ENG SUB)") to a localized title --
   you decide the exact wording and pass it in whole, since title tone is a
   judgment call this script shouldn't make for you.
-- Leaves descriptions untouched by default. Pass --en-description to
-  replace only the en-locale description.
+- Leaves descriptions untouched by default. --description LANG=TEXT (repeatable),
+  a "description" key in --locs, or --en-description replace that locale's
+  description only.
 
 Stdlib only, no external packages. --token follows the same convention as
 upload_caption.py (bare filename resolved against $YTCAPTION_HOME or ~/.claude/credentials/,
@@ -42,7 +46,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common as C  # noqa: E402
-from upload_caption import access_token  # noqa: E402  (reuse auth logic from the same folder)
+from upload_caption import access_token, raise_for_http  # noqa: E402  (reuse auth logic from the same folder)
 
 API = "https://www.googleapis.com/youtube/v3/videos"
 
@@ -51,7 +55,11 @@ def get_video(at: str, video_id: str) -> dict:
     u = f"{API}?" + urllib.parse.urlencode(
         {"part": "snippet,localizations", "id": video_id})
     req = urllib.request.Request(u, headers={"Authorization": f"Bearer {at}"})
-    items = json.load(urllib.request.urlopen(req, timeout=60))["items"]
+    try:
+        items = json.load(urllib.request.urlopen(req, timeout=60))["items"]
+    except urllib.error.HTTPError as e:
+        raise_for_http(e, "Video lookup", 300)
+        raise  # unreachable
     if not items:
         raise SystemExit(f"Video not found: {video_id}")
     return items[0]
@@ -65,7 +73,8 @@ def put_video(at: str, body: dict) -> dict:
     try:
         return json.load(urllib.request.urlopen(req, timeout=60))
     except urllib.error.HTTPError as e:
-        raise SystemExit(f"Update failed {e.code}: {e.read().decode('utf-8', 'replace')}")
+        raise_for_http(e, "Update", 2000)
+        raise  # unreachable
 
 
 def parse_titles(pairs: list[str], en_title: str | None) -> dict[str, str]:
@@ -86,19 +95,63 @@ def parse_titles(pairs: list[str], en_title: str | None) -> dict[str, str]:
     return out
 
 
+def parse_descriptions(pairs: list[str]) -> dict[str, str]:
+    """['ja=...'] -> {lang: description}. Raises ValueError."""
+    out: dict[str, str] = {}
+    for item in pairs or []:
+        lang, sep, text = item.partition("=")
+        lang, text = lang.strip(), text.replace("\\n", "\n").strip()
+        if not sep or not text:
+            raise ValueError(f"--description expects LANG=TEXT, got: {item!r}")
+        lang = C.validate_pref("source_language", lang)
+        if lang in out:
+            raise ValueError(f"description for '{lang}' given more than once")
+        out[lang] = text
+    return out
+
+
+def load_locs(path: str) -> tuple[dict[str, str], dict[str, str]]:
+    """--locs JSON {lang: {"title": ..., "description": ...}} -> (titles, descriptions). Raises ValueError."""
+    try:
+        data = json.loads(C.read_text_file(C.expand_path(path)))
+    except FileNotFoundError:
+        raise ValueError(f"--locs file not found: {path}") from None
+    except json.JSONDecodeError as e:
+        raise ValueError(f"--locs is not valid JSON: {e}") from None
+    if not isinstance(data, dict):
+        raise ValueError("--locs must be a JSON object keyed by language code")
+    titles: dict[str, str] = {}
+    descs: dict[str, str] = {}
+    for lang, entry in data.items():
+        lang = C.validate_pref("source_language", str(lang).strip())
+        if not isinstance(entry, dict) or not str(entry.get("title", "")).strip():
+            raise ValueError(f"--locs entry for '{lang}' needs a non-empty \"title\"")
+        title = str(entry["title"]).strip()
+        if len(title) > 100:
+            raise ValueError(f"'{lang}' title is {len(title)} characters; YouTube allows 100")
+        titles[lang] = title
+        if str(entry.get("description", "")).strip():
+            descs[lang] = str(entry["description"])
+    return titles, descs
+
+
 def build_body(video_id: str, sn: dict, loc: dict, titles: dict[str, str], en_description: str | None,
-               original_language: str, keep_default_language: bool) -> dict:
+               original_language: str, keep_default_language: bool,
+               descriptions: dict[str, str] | None = None) -> dict:
     new_loc = {**loc}
     for lang, title in titles.items():
         entry = dict(loc.get(lang, {}))
         entry["title"] = title
         entry.setdefault("description", sn["description"])
         new_loc[lang] = entry
+    descs = dict(descriptions or {})
     if en_description:
-        entry = dict(new_loc.get("en", loc.get("en", {})))
+        descs["en"] = en_description
+    for lang, desc in descs.items():
+        entry = dict(new_loc.get(lang, loc.get(lang, {})))
         entry.setdefault("title", sn["title"])
-        entry["description"] = en_description
-        new_loc["en"] = entry
+        entry["description"] = desc
+        new_loc[lang] = entry
     body = {
         "id": video_id,
         "snippet": {
@@ -126,6 +179,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="localized title, repeatable: --title en=\"...\" --title ja=\"...\"")
     ap.add_argument("--en-title", help="alias for --title en=TEXT")
     ap.add_argument("--en-description", help="en-locale description (omit to keep existing)")
+    ap.add_argument("--description", action="append", metavar="LANG=TEXT", default=[],
+                    help="localized description, repeatable (\\n becomes a newline)")
+    ap.add_argument("--locs", metavar="FILE.json",
+                    help='many locales at once: {"ja": {"title": "...", "description": "..."}, ...}')
     ap.add_argument("--original-language", default=None,
                     help="original spoken language; defaultLanguage is corrected to this "
                          "(default: prefs source_language, else ko)")
@@ -137,6 +194,14 @@ def main(argv: list[str] | None = None) -> int:
     original = args.original_language or C.load_prefs().get("source_language") or "ko"
     try:
         titles = parse_titles(args.title, args.en_title)
+        descriptions = parse_descriptions(args.description)
+        if args.locs:
+            loc_titles, loc_descs = load_locs(args.locs)
+            for lang in loc_titles:
+                if lang in titles:
+                    raise ValueError(f"title for '{lang}' given both in --locs and --title")
+            titles.update(loc_titles)
+            descriptions = {**loc_descs, **descriptions}
     except ValueError as e:
         raise SystemExit(f"error: {e}")
 
@@ -153,10 +218,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.show:
         return 0
 
-    if not titles and not args.en_description:
-        raise SystemExit("need --title LANG=TEXT (or --en-title / --en-description); use --show to only inspect")
+    if not titles and not args.en_description and not descriptions:
+        raise SystemExit("need --title LANG=TEXT, --locs FILE, --description or --en-description; "
+                         "use --show to only inspect")
 
-    body = build_body(args.video, sn, loc, titles, args.en_description, original, args.keep_default_language)
+    body = build_body(args.video, sn, loc, titles, args.en_description, original, args.keep_default_language,
+                      descriptions)
     res = put_video(at, body)
     s2 = res["snippet"]
     print("---")

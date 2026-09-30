@@ -220,6 +220,13 @@ python3 scripts/upload_caption.py --video VIDEO_ID --srt translation.en.srt --la
 # set locale-specific titles (repeatable; --en-title X = --title "en=X")
 python3 scripts/set_localization.py --video VIDEO_ID --title "en=Your English Title" --title "ja=あなたの日本語タイトル"
 
+# many languages at once: titles/descriptions from one JSON file
+python3 scripts/set_localization.py --video VIDEO_ID --locs "<working folder>/locs.json"
+
+# multi-language expansion: pull the reviewed pivot track, then check each translation against it
+python3 scripts/download_caption.py --video VIDEO_ID --all --out-dir "<working folder>"
+python3 scripts/check_parallel.py "<working folder>/VIDEO_ID.en.srt" "<working folder>/VIDEO_ID.ja.srt" --lang ja
+
 # pull thumbnail candidates
 python3 scripts/extract_thumbnails.py grab --source VIDEO.mp4 --timestamps "0:06,2:38,3:03" --out "<working folder>/thumbs"
 python3 scripts/extract_thumbnails.py gallery --picks-dir "<working folder>/thumbs/picks" --out "<working folder>/thumbs/gallery.html"
@@ -227,6 +234,18 @@ python3 scripts/extract_thumbnails.py gallery --picks-dir "<working folder>/thum
 
 Token files given as a bare filename resolve against the config folder;
 you can also pass an absolute path.
+
+## More than one language
+
+Do it in two stages. First get **one pivot language** (usually English)
+exactly right, with a human checking the nuance. Only then let the agent
+expand to the other languages: each is translated from the reviewed pivot
+track with the same blocks and timecodes, cross-reviewed by a second agent,
+and checked by `check_parallel.py` — no line-by-line human review. Pick the
+languages from your own audience data (YouTube Analytics by country) rather
+than a long list: every caption upload costs about 450 of the ~10,000 daily
+quota units. Titles get each language's own subtitle marker (`【日本語字幕】`,
+`(Sub Indo)`, `(Vietsub)`, `(VOSTFR)`...). Details: SKILL.md step ⑦.
 
 ## Why merge before translating
 
@@ -248,7 +267,7 @@ timecodes still anchored to the original fragment boundaries, so
 
 | Path | What it is |
 |---|---|
-| [SKILL.md](SKILL.md) | The workflow the agent follows: Phase 0 setup, step Ⓐ (get a source SRT), steps ⓪ to ⑥ |
+| [SKILL.md](SKILL.md) | The workflow the agent follows: Phase 0 setup, step Ⓐ (get a source SRT), steps ⓪ to ⑦ |
 | [AGENTS.md](AGENTS.md) | Bridge for agents that do not auto-load skills |
 | [references/setup-wizard.md](references/setup-wizard.md) | The exact first-run question script |
 | [references/google-cloud-setup.md](references/google-cloud-setup.md) | Google Cloud walkthrough, quota, troubleshooting |
@@ -265,7 +284,9 @@ timecodes still anchored to the original fragment boundaries, so
 | `scripts/align_pairs.py` | Source/target review table |
 | `scripts/reauth_channel.py` | Authorize a channel and save its token |
 | `scripts/upload_caption.py` | Create or update a caption track |
-| `scripts/set_localization.py` | Locale-specific video title |
+| `scripts/set_localization.py` | Locale-specific video titles and descriptions (`--locs` for many at once) |
+| `scripts/download_caption.py` | Download a video's existing caption tracks as SRT |
+| `scripts/check_parallel.py` | Check a translation against its pivot track (same blocks, timecodes, limits) |
 | `scripts/extract_thumbnails.py` | Thumbnail candidate frames and gallery |
 
 ## License
