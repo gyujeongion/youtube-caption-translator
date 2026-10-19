@@ -71,14 +71,14 @@ New to the words (OAuth, quota unit, SRT...)? See the
 
 The agent runs a checklist (`scripts/check_setup.py`), then asks:
 
-1. **Languages** — what you speak, and which languages to translate into.
-2. **What to do when a video has no SRT** — nothing (SRT only), cloud
+1. **Languages**: what you speak, and which languages to translate into.
+2. **What to do when a video has no SRT**: nothing (SRT only), cloud
    speech-to-text, or local speech-to-text. An editor SRT is always used
    first, per video.
-3. **Publish mode** — `review` (you approve each upload; recommended for the
+3. **Publish mode**: `review` (you approve each upload; recommended for the
    first videos) or `direct` (uploads right after the checks pass; your
    setup choice is the approval).
-4. **YouTube channel** — which channel gets the captions.
+4. **YouTube channel**: which channel gets the captions.
 
 Then it walks you through Google Cloud (create a project, turn on the YouTube
 Data API, set up the consent screen, create a Desktop OAuth client, publish
@@ -241,7 +241,7 @@ Do it in two stages. First get **one pivot language** (usually English)
 exactly right, with a human checking the nuance. Only then let the agent
 expand to the other languages: each is translated from the reviewed pivot
 track with the same blocks and timecodes, cross-reviewed by a second agent,
-and checked by `check_parallel.py` — no line-by-line human review. Pick the
+and checked by `check_parallel.py`, with no line-by-line human review. Pick the
 languages from your own audience data (YouTube Analytics by country) rather
 than a long list: every caption upload costs about 450 of the ~10,000 daily
 quota units. Titles get each language's own subtitle marker (`【日本語字幕】`,
